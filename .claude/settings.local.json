@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:stockanalysis.com)",
+      "WebFetch(domain:in.tradingview.com)",
+      "WebFetch(domain:finance.yahoo.com)",
+      "WebFetch(domain:quote.eastmoney.com)",
+      "Bash(export TRADINGAGENTS_LOG_FILE=\"d:/Codes/tradingagents-cn-skill-main/scripts/logs/600879_20260422_$\\(date +%H%M%S\\).log\")"
+    ]
+  }
+}
