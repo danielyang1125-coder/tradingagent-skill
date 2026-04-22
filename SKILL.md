@@ -2,12 +2,12 @@
 name: tradingagents-cn-skill
 version: 2.0.0
 description: >
-  分析股票并生成 PDF 报告。当用户提到以下任何一种意图时触发：
-  分析股票、股票分析、生成PDF、生成报告、股票报告、分析一下、
+  分析股票并生成 JSON 分析报告。当用户提到以下任何一种意图时触发：
+  分析股票、股票分析、股票报告、分析一下、
   看看这只股票、帮我分析、技术分析、基本面分析、买卖建议、
   风险评估、多空分析、投资建议。
   支持输入：股票截图、股票代码、股票名称、行情文字描述。
-  输出：多智能体深度分析 PDF 报告（技术面+基本面+新闻+多空辩论+风控评估+五级评级）。
+  输出：多智能体深度分析 JSON 报告（技术面+基本面+新闻+多空辩论+风控评估+五级评级）。
 metadata:
   openclaw:
     emoji: "📊"
@@ -18,7 +18,7 @@ metadata:
 # TradingAgents-CN Skill
 
 多智能体股票分析框架。Agent **在主进程中串行**完成 12 步分析，参照 TradingAgents 论文架构：
-三位分析师（各自独立调用）→ 多空辩论（2轮）→ 研究管理者裁决 → 交易员 → 风控三方辩论 → 投资组合经理最终决策 → PDF 报告。
+三位分析师（各自独立调用）→ 多空辩论（2轮）→ 研究管理者裁决 → 交易员 → 风控三方辩论 → 投资组合经理最终决策 → JSON 报告。
 
 ## 全局规则
 
@@ -35,7 +35,7 @@ metadata:
 
 ### 执行模式
 
-**全程自动执行，不询问用户。** 遇到错误自动重试（最多 3 次），某步失败使用默认值继续，只在最终输出 PDF 和摘要。
+**全程自动执行，不询问用户。** 遇到错误自动重试（最多 3 次），某步失败使用默认值继续，只在最终输出 JSON 和摘要。
 
 ### 验证与数据存储策略
 
@@ -75,7 +75,7 @@ with open(f"scripts/results/{stock_code}_report.json", "w", encoding="utf-8", ne
 **操作步骤**：
 1. 跳过每步的 `validate_step.py --save` 调用，将所有 LLM 输出保存在 Agent 上下文变量中
 2. 全部步骤完成后，用上述模式一次性写入 report.json
-3. 再执行 `generate_report.py` 生成 PDF
+3. 全部步骤完成后，用上述模式一次性写入 report.json
 
 ### 日志
 
@@ -111,7 +111,7 @@ Step 10: 激进 + 保守 + 中立三方风控辩论
 ───── 阶段五：最终决策 ─────
 Step 11: 投资组合经理（最终决策）LLM → final_decision（验证 rating）
 ───── 阶段六：报告生成 ─────
-Step 12: 组装 JSON → 生成 PDF
+Step 12: 组装并输出 JSON 报告
 ```
 
 ---
@@ -609,30 +609,27 @@ echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step portfolio
 
 ---
 
-## Step 12: 生成 PDF 报告
+## Step 12: 输出 JSON 报告
 
-**所有步骤的数据已通过 `--save` 自动写入 `results/{stock_code}_report.json`。** 直接生成 PDF：
+所有步骤的数据已通过 `--save` 自动写入 `results/{stock_code}_report.json`。
 
-```bash
-python3 {baseDir}/scripts/generate_report.py --input {baseDir}/scripts/results/{股票代码}_report.json
+**将 JSON 文件路径告知用户：**
+
 ```
-
-如果命令失败（exit code != 0），检查日志后重试一次。
-
-**必须将 PDF 文件直接发送给用户。** 使用文件发送能力将 PDF 作为附件发给用户。
+{baseDir}/scripts/results/{股票代码}_report.json
+```
 
 同时附上简要的分析摘要：
 - 评级（五级：买入/增持/持有/减持/卖出）
 - 关键价格：买入价、目标价、止损价
 - 风险等级和投资期限
 - 一句话投资论文
+
 ---
 
 ## 输出文件
 
-PDF 默认保存到 `{baseDir}/scripts/reports/`，文件名格式：`{股票代码}_{YYYYMMDD}_{HHMMSS}.pdf`
-
-可通过 `--output-dir` 指定输出到用户工作目录。
+JSON 报告保存到 `{baseDir}/scripts/results/`，文件名格式：`{股票代码}_report.json`
 
 ---
 

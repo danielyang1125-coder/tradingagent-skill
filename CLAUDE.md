@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-TradingAgents-CN is a Chinese-language multi-agent A-share stock analysis skill for the OpenClaw Agent platform. It implements a 12-step serial workflow that produces professional PDF reports with multi-perspective analysis, bull/bear debates, and risk management consensus.
+TradingAgents-CN is a Chinese-language multi-agent A-share stock analysis skill for the OpenClaw Agent platform. It implements a 12-step serial workflow that produces structured JSON analysis reports with multi-perspective analysis, bull/bear debates, and risk management consensus.
 
 ## Key Commands
 
@@ -20,10 +20,6 @@ echo '<json>' | python3 scripts/validate_step.py --step bull_debate --stock-code
 
 # Get default value for a step (useful for testing)
 python3 scripts/validate_step.py --step tech --default
-
-# Generate PDF from completed report.json
-python3 scripts/generate_report.py --input scripts/results/000729_report.json
-python3 scripts/generate_report.py --input scripts/results/000729_report.json --output-dir ./custom_reports
 ```
 
 Set log file path before running:
@@ -38,7 +34,7 @@ export TRADINGAGENTS_LOG_FILE="scripts/logs/000729_20260422_120000.log"
 ```
 User Input → Data Extraction → News Search → Tech/Fundamentals/News Analysts
 → Bull/Bear Debate (2 rounds) → Research Manager → Trader Plan
-→ Risk Debate (Aggressive/Conservative/Neutral) → Portfolio Manager → PDF
+→ Risk Debate (Aggressive/Conservative/Neutral) → Portfolio Manager → JSON
 ```
 
 All steps run in the main agent process. No subagents. Each step depends on the previous step's output written to `report.json`.
@@ -80,7 +76,7 @@ Every LLM output is piped through `validate_step.py --save`, which:
 
 ### Key Design Decisions
 
-- **English JSON keys, Chinese display**: All keys in `report.json` are English for LLM output stability. `pdf_generator.py` maps them to Chinese via `KEY_CN_MAP` (84 entries) for rendering.
+- **English JSON keys, Chinese display**: All keys in `report.json` are English for LLM output stability.
 - **Retry on validation failure**: `validate_step.py` exits 1 with a structured hint; the agent retries with the hint injected. After max retries, `--default` provides a safe fallback.
 - **Trader price validation**: If `decision` is `买入`, `buy_price`/`target_price`/`stop_loss` must be numeric — special-cased in `validate_trader()`.
 - **Valid final ratings**: 买入 / 增持 / 持有 / 减持 / 卖出
@@ -91,12 +87,9 @@ Every LLM output is piped through `validate_step.py --save`, which:
 |------|---------|
 | `SKILL.md` | Complete 12-step workflow definition — the agent's operating instructions |
 | `scripts/validate_step.py` | JSON validation + report.json writer (625 lines) |
-| `scripts/pdf_generator.py` | HTML→PDF rendering engine with `KEY_CN_MAP` |
-| `scripts/generate_report.py` | PDF generation entry point |
 | `references/*_prompt.md` | Role-specific system prompts for each analyst/debater/manager |
 
 ### Output Artifacts
 
-- `scripts/results/{stock_code}_report.json` — intermediate analysis data
-- `scripts/reports/{stock_code}_{name}_{timestamp}.pdf` — final PDF report
+- `scripts/results/{stock_code}_report.json` — complete analysis data (final output)
 - `scripts/logs/{stock_code}_{timestamp}.log` — execution log (JSON lines)
