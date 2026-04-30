@@ -16,3 +16,4 @@ scripts/results/
 scripts/logs/
 scripts/reports/
 __pycache__/
+.claude/
