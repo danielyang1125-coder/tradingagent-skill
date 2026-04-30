@@ -37,52 +37,23 @@ metadata:
 
 **全程自动执行，不询问用户。** 遇到错误自动重试（最多 3 次），某步失败使用默认值继续，只在最终输出 JSON 和摘要。
 
-### 验证与数据存储策略
+### 验证策略
 
-**每步 LLM 调用后必须 validate + save。** `validate_step.py --save` 会验证输出并自动写入 `results/{stock_code}_report.json` 的对应字段。
+**每步 LLM 调用后必须 validate。** 验证通过后将 JSON 保存在 Agent 上下文变量中，不写磁盘。
 
 **每步 validate 命令格式：**
 ```bash
-echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step <步骤名> --stock-code <code> --save
+echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step <步骤名> --stock-code <code>
 ```
 
 辩论 Round 2 需要加 `--round 2`：
 ```bash
-echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step bull_debate --stock-code <code> --round 2 --save
+echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step bull_debate --stock-code <code> --round 2
 ```
 
 验证失败（exit 1）→ 将 stderr 中的 hint 追加到 prompt 重试，最多 3 次。全部失败 → 用默认值：
 ```bash
 python3 {baseDir}/scripts/validate_step.py --step <步骤名> --default
-```
-
-### ⚠️ Windows + IDE 环境下的 report.json 写入问题
-
-**症状**：`validate_step.py --save` 报 `JSONDecodeError: Expecting value`，report.json 文件被截断（末尾出现 `"report": ` 无值）。
-
-**根本原因**：VSCode 等 IDE 的文件监视器在检测到写入事件时会触发格式化/lint，与 Python 的分步写入产生竞争，导致文件截断。
-
-**解决方案**：跳过分步 `--save`，改用一次性构建脚本（参考 `scripts/build_report.py`）：
-
-```python
-# 在内存中构建完整 report dict，最后一次性写入
-import json
-report = { ...所有步骤的完整数据... }
-with open(f"scripts/results/{stock_code}_report.json", "w", encoding="utf-8", newline="\n") as f:
-    json.dump(report, f, ensure_ascii=False, indent=2)
-```
-
-**操作步骤**：
-1. 跳过每步的 `validate_step.py --save` 调用，将所有 LLM 输出保存在 Agent 上下文变量中
-2. 全部步骤完成后，用上述模式一次性写入 report.json
-3. 全部步骤完成后，用上述模式一次性写入 report.json
-
-### 日志
-
-分析开始前，设置日志环境变量：
-```bash
-export TRADINGAGENTS_LOG_FILE="{baseDir}/scripts/logs/{股票代码}_{YYYYMMDD}_{HHMMSS}.log"
-mkdir -p {baseDir}/scripts/logs
 ```
 
 ### 语言要求
@@ -260,11 +231,6 @@ with urllib.request.urlopen(req, timeout=15) as r:
 
 将公告标题整理为 `news_list` 条目，`summary` 字段根据标题内容手动推断（50字以上），`sentiment` 根据公告性质判断（司法拍卖/诉讼→偏空，收购/重组→偏多，常规公告→中性）。
 
-**Step 2 完成后，初始化 report.json**（此时 Step 1 的 stock_data 和 Step 2 的 news_data 都已就绪）：
-```bash
-python3 {baseDir}/scripts/validate_step.py --init '{"stock_code":"<code>","stock_name":"<name>","current_price":<price>,"news_data":<news_data变量>}' --stock-code <code>
-```
-
 ---
 
 ## Step 3: 技术/市场分析师
@@ -283,7 +249,7 @@ python3 {baseDir}/scripts/validate_step.py --init '{"stock_code":"<code>","stock
 
 **验证并保存**：
 ```bash
-echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step tech --stock-code {股票代码} --save
+echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step tech --stock-code {股票代码}
 ```
 
 ---
@@ -304,7 +270,7 @@ echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step tech --st
 
 **验证并保存**：
 ```bash
-echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step fundamentals --stock-code {股票代码} --save
+echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step fundamentals --stock-code {股票代码}
 ```
 
 ---
@@ -328,7 +294,7 @@ echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step fundament
 
 **验证并保存**：
 ```bash
-echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step news --stock-code {股票代码} --save
+echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step news --stock-code {股票代码}
 ```
 
 **如果某个分析师输出异常**（空、非 JSON、缺字段），validate 会 exit 1 并给 hint，重试或使用默认值：
@@ -365,7 +331,7 @@ python3 {baseDir}/scripts/validate_step.py --step news --default
 
 **验证并保存 bull_r1**：
 ```bash
-echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step bull_debate --stock-code {股票代码} --round 1 --save
+echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step bull_debate --stock-code {股票代码} --round 1
 ```
 
 ### 6B: 看空研究员 Round 1
@@ -392,7 +358,7 @@ echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step bull_deba
 
 **验证并保存 bear_r1**：
 ```bash
-echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step bear_debate --stock-code {股票代码} --round 1 --save
+echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step bear_debate --stock-code {股票代码} --round 1
 ```
 
 ---
@@ -415,7 +381,7 @@ echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step bear_deba
 
 **验证并保存 bull_r2**：
 ```bash
-echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step bull_debate --stock-code {股票代码} --round 2 --save
+echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step bull_debate --stock-code {股票代码} --round 2
 ```
 
 ### 7B: 看空研究员 Round 2
@@ -435,7 +401,7 @@ echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step bull_deba
 
 **验证并保存 bear_r2**：
 ```bash
-echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step bear_debate --stock-code {股票代码} --round 2 --save
+echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step bear_debate --stock-code {股票代码} --round 2
 ```
 
 ---
@@ -466,7 +432,7 @@ echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step bear_deba
 
 **验证并保存**：
 ```bash
-echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step manager --stock-code {股票代码} --save
+echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step manager --stock-code {股票代码}
 ```
 
 ---
@@ -488,7 +454,7 @@ echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step manager -
 
 **验证并保存**：
 ```bash
-echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step trader --stock-code {股票代码} --save
+echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step trader --stock-code {股票代码}
 ```
 
 ---
@@ -515,7 +481,7 @@ echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step trader --
 
 **验证并保存**：
 ```bash
-echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step risk_aggressive --stock-code {股票代码} --save
+echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step risk_aggressive --stock-code {股票代码}
 ```
 
 ### 10B: 保守型风控分析师
@@ -536,7 +502,7 @@ echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step risk_aggr
 
 **验证并保存**：
 ```bash
-echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step risk_conservative --stock-code {股票代码} --save
+echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step risk_conservative --stock-code {股票代码}
 ```
 
 ### 10C: 中立型风控分析师
@@ -560,7 +526,7 @@ echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step risk_cons
 
 **验证并保存**：
 ```bash
-echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step risk_neutral --stock-code {股票代码} --save
+echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step risk_neutral --stock-code {股票代码}
 ```
 
 ---
@@ -597,26 +563,48 @@ echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step risk_neut
 
 **此步必须验证**：
 ```bash
-echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step portfolio_manager --stock-code {股票代码} --attempt 1 --save
+echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step portfolio_manager --stock-code {股票代码} --attempt 1
 ```
 
 - `exit 0` → 通过，继续
 - `exit 1` → 将 hint 追加到 prompt 重新调用 LLM，最多重试 **3 次**
 - 超过 3 次 → 使用默认值：
   ```bash
-  python3 {baseDir}/scripts/validate_step.py --step portfolio_manager --default --stock-code {股票代码} --save
+  python3 {baseDir}/scripts/validate_step.py --step portfolio_manager --default --stock-code {股票代码}
   ```
 
 ---
 
 ## Step 12: 输出 JSON 报告
 
-所有步骤的数据已通过 `--save` 自动写入 `results/{stock_code}_report.json`。
+将所有步骤的上下文变量组装成完整 JSON，直接输出到对话中：
 
-**将 JSON 文件路径告知用户：**
-
-```
-{baseDir}/scripts/results/{股票代码}_report.json
+```json
+{
+  "stock_code": "{股票代码}",
+  "stock_name": "{股票名称}",
+  "current_price": {当前价格},
+  "news_data": {news_data},
+  "parallel_analysis": {
+    "tech_analyst": {tech_analyst},
+    "fundamentals_analyst": {fundamentals_analyst},
+    "news_analyst": {news_analyst}
+  },
+  "investment_debate": {
+    "bull_r1": {bull_r1},
+    "bear_r1": {bear_r1},
+    "bull_r2": {bull_r2},
+    "bear_r2": {bear_r2}
+  },
+  "manager_decision": {manager_decision},
+  "trading_plan": {trading_plan},
+  "risk_debate": {
+    "aggressive": {risk_aggressive},
+    "conservative": {risk_conservative},
+    "neutral": {risk_neutral}
+  },
+  "final_decision": {final_decision}
+}
 ```
 
 同时附上简要的分析摘要：
@@ -624,12 +612,6 @@ echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step portfolio
 - 关键价格：买入价、目标价、止损价
 - 风险等级和投资期限
 - 一句话投资论文
-
----
-
-## 输出文件
-
-JSON 报告保存到 `{baseDir}/scripts/results/`，文件名格式：`{股票代码}_report.json`
 
 ---
 
