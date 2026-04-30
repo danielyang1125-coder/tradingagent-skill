@@ -9,22 +9,14 @@ TradingAgents-CN is a Chinese-language multi-agent A-share stock analysis skill 
 ## Key Commands
 
 ```bash
-# Initialize report.json for a stock
-python3 scripts/validate_step.py --init '{"stock_code":"000729","stock_name":"燕京啤酒","current_price":5.50,"news_data":{"news_list":[]}}' --stock-code 000729
-
-# Validate + save LLM output for a step (pipe LLM output via stdin)
-echo '<json>' | python3 scripts/validate_step.py --step tech --stock-code 000729 --save
+# Validate LLM output for a step (pipe LLM output via stdin)
+echo '<json>' | python3 scripts/validate_step.py --step tech --stock-code 000729
 
 # Debate round 2 requires --round flag
-echo '<json>' | python3 scripts/validate_step.py --step bull_debate --stock-code 000729 --round 2 --save
+echo '<json>' | python3 scripts/validate_step.py --step bull_debate --stock-code 000729 --round 2
 
 # Get default value for a step (useful for testing)
 python3 scripts/validate_step.py --step tech --default
-```
-
-Set log file path before running:
-```bash
-export TRADINGAGENTS_LOG_FILE="scripts/logs/000729_20260422_120000.log"
 ```
 
 ## Architecture
@@ -37,14 +29,14 @@ User Input → Data Extraction → News Search → Tech/Fundamentals/News Analys
 → Risk Debate (Aggressive/Conservative/Neutral) → Portfolio Manager → JSON
 ```
 
-All steps run in the main agent process. No subagents. Each step depends on the previous step's output written to `report.json`.
+All steps run in the main agent process. No subagents. Each step depends on the previous step's output held in Agent context variables.
 
 ### Data Pipeline
 
-Every LLM output is piped through `validate_step.py --save`, which:
+Every LLM output is piped through `validate_step.py`, which:
 1. Extracts JSON from LLM output (handles markdown code blocks, escaped newlines)
 2. Validates required fields for that step
-3. On success (`exit 0`): writes to `scripts/results/{stock_code}_report.json` and prints JSON to stdout
+3. On success (`exit 0`): prints cleaned JSON to stdout — agent saves it as a context variable
 4. On failure (`exit 1`): prints error JSON with retry hint to stderr — agent retries up to 2-3 times, then falls back to default
 
 ### report.json Structure
@@ -86,10 +78,10 @@ Every LLM output is piped through `validate_step.py --save`, which:
 | File | Purpose |
 |------|---------|
 | `SKILL.md` | Complete 12-step workflow definition — the agent's operating instructions |
-| `scripts/validate_step.py` | JSON validation + report.json writer (625 lines) |
+| `scripts/validate_step.py` | JSON validation tool (625 lines) |
 | `references/*_prompt.md` | Role-specific system prompts for each analyst/debater/manager |
 
 ### Output Artifacts
 
-- `scripts/results/{stock_code}_report.json` — complete analysis data (final output)
 - `scripts/logs/{stock_code}_{timestamp}.log` — execution log (JSON lines)
+- Final JSON report is output directly to the conversation at Step 12
