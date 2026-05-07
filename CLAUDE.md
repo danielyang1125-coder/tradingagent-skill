@@ -10,13 +10,13 @@ TradingAgents-CN is a Chinese-language multi-agent A-share stock analysis skill 
 
 ```bash
 # Validate LLM output for a step (pipe LLM output via stdin)
-echo '<json>' | python3 scripts/validate_step.py --step tech --stock-code 000729
+echo '<json>' | python3 .claude/skills/tradingagents-cn-skill/scripts/validate_step.py --step tech --stock-code 000729
 
 # Debate round 2 requires --round flag
-echo '<json>' | python3 scripts/validate_step.py --step bull_debate --stock-code 000729 --round 2
+echo '<json>' | python3 .claude/skills/tradingagents-cn-skill/scripts/validate_step.py --step bull_debate --stock-code 000729 --round 2
 
 # Get default value for a step (useful for testing)
-python3 scripts/validate_step.py --step tech --default
+python3 .claude/skills/tradingagents-cn-skill/scripts/validate_step.py --step tech --default
 ```
 
 ## Architecture
@@ -77,11 +77,11 @@ Every LLM output is piped through `validate_step.py`, which:
 
 | File | Purpose |
 |------|---------|
-| `SKILL.md` | Complete 12-step workflow definition — the agent's operating instructions |
-| `scripts/validate_step.py` | JSON validation tool (625 lines) |
-| `references/*_prompt.md` | Role-specific system prompts for each analyst/debater/manager |
+| `.claude/skills/tradingagents-cn-skill/SKILL.md` | Complete 12-step workflow definition — the agent's operating instructions |
+| `.claude/skills/tradingagents-cn-skill/scripts/validate_step.py` | JSON validation tool (625 lines) |
+| `.claude/skills/tradingagents-cn-skill/references/*_prompt.md` | Role-specific system prompts for each analyst/debater/manager |
 
 ### Output Artifacts
 
-- `scripts/logs/{stock_code}_{timestamp}.log` — execution log (JSON lines)
+- `.claude/skills/tradingagents-cn-skill/scripts/logs/{stock_code}_{timestamp}.log` — execution log (JSON lines)
 - Final JSON report is output directly to the conversation at Step 12

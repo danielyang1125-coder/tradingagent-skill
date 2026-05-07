@@ -1,5 +1,5 @@
 scripts/reports/
-scripts/logs/
+**/scripts/logs/
 scripts/results/
 scripts/__pycache__/
 *.pyc
@@ -16,4 +16,3 @@ scripts/results/
 scripts/logs/
 scripts/reports/
 __pycache__/
-.claude/
