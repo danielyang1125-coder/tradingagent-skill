@@ -1,6 +1,6 @@
 ---
 name: tradingagents-cn-skill
-version: 2.0.0
+version: 2.1.0
 description: >
   分析股票并生成 JSON 分析报告。当用户提到以下任何一种意图时触发：
   分析股票、股票分析、股票报告、分析一下、
@@ -13,6 +13,7 @@ metadata:
     emoji: "📊"
     requires:
       bins: ["python3"]
+      packages: ["akshare>=1.14.0"]
 ---
 
 # TradingAgents-CN Skill
@@ -140,33 +141,60 @@ Step 12: 组装并输出 JSON 报告
   }
   ```
 
-**A股补充：用 Python 直接获取实时行情和 K 线数据**
+**A股补充：用 AKShare + 新浪财经获取实时行情、K线和基本面数据**
 
-当用户输入的是 A 股代码/名称时，优先通过以下 API 获取真实数据，再填入 stock_data：
+⚠️ 前提：确保 Python 环境中已安装 `akshare`（`pip install akshare`）。AKShare 无需 API Key，零配置。
+
+当用户输入的是 A 股代码/名称时，按以下四阶段获取数据，再填入 stock_data：
+
+**阶段一：AKShare 实时行情 + 基本面（主数据源）**
 
 ```python
-import urllib.request, json
+import akshare as ak
 
-# 1. 新浪财经实时行情（GBK 编码）
-# 深市(000/002/003/300)用 sz 前缀，沪市(600/601/603/688)用 sh 前缀
-url = f"https://hq.sinajs.cn/list=sz{stock_code}"
-req = urllib.request.Request(url, headers={"Referer": "https://finance.sina.com.cn/", "User-Agent": "Mozilla/5.0"})
-with urllib.request.urlopen(req, timeout=15) as r:
-    line = r.read().decode("gbk")
-# 解析：fields = line.split('"')[1].split(',')
-# fields[3]=最高 fields[4]=最低 fields[5]=现价 fields[6]=涨跌额 fields[7]=成交量 fields[8]=成交额
-
-# 2. 新浪财经日K线+均线（GBK 编码，含 MA5/10/20/30/60）
-url = f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=sz{stock_code}&scale=240&ma=5,10,20,30,60&datalen=60"
-req = urllib.request.Request(url, headers={"Referer": "https://finance.sina.com.cn/", "User-Agent": "Mozilla/5.0"})
-with urllib.request.urlopen(req, timeout=15) as r:
-    klines = json.loads(r.read().decode("gbk"))
-# 每条格式：{"day":"2026-04-21","open":"1.91","high":"1.92","low":"1.86","close":"1.87",
-#            "volume":"210949622","ma_price5":1.888,"ma_price10":1.888,"ma_price20":1.894,"ma_price30":1.981}
+# 实时行情含 PE/PB/市值（UTF-8 原生，无 GBK 编码问题，无魔术除数）
+df_spot = ak.stock_zh_a_spot_em()
+row = df_spot[df_spot["代码"] == stock_code].iloc[0]
+# row["最新价"]=现价, row["涨跌幅"]=涨跌幅%, row["成交量"]=成交量(手)
+# row["成交额"]=成交额, row["市盈率-动态"]=PE(TTM), row["市净率"]=PB
+# row["总市值"]=总市值, row["流通市值"]=流通市值
 ```
 
-从 K 线数据中计算 MACD/KDJ（纯 Python，无需第三方库）：
+**阶段二：AKShare 历史K线（不限长度，前复权，彻底解决 MA60 缺失）**
+
 ```python
+# period="daily", adjust="qfq" 前复权。start_date 至少回溯 120 个交易日以确保 MA60 可用
+df_hist = ak.stock_zh_a_hist(symbol=stock_code, period="daily",
+                              start_date="20250901", end_date="20260508", adjust="qfq")
+# df_hist columns: 日期, 开盘, 收盘, 最高, 最低, 成交量, 成交额, 振幅, 涨跌幅, 涨跌额, 换手率
+
+# 转换为与 MACD/KDJ 计算兼容的格式
+klines = [{"day": str(r["日期"])[:10], "open": str(r["开盘"]), "high": str(r["最高"]),
+           "low": str(r["最低"]), "close": str(r["收盘"]), "volume": str(r["成交量"])}
+          for _, r in df_hist.iterrows()]
+```
+
+**阶段三：新浪财经实时行情（快速备选，当 AKShare `stock_zh_a_spot_em` 超时时 fallback）**
+
+```python
+import urllib.request
+
+# 沪市 sh，深市 sz（000/002/003/300）
+prefix = "sh" if stock_code.startswith(("6","68")) else "sz"
+url = f"https://hq.sinajs.cn/list={prefix}{stock_code}"
+req = urllib.request.Request(url, headers={"Referer": "https://finance.sina.com.cn/", "User-Agent": "Mozilla/5.0"})
+with urllib.request.urlopen(req, timeout=10) as r:
+    line = r.read().decode("gbk")
+fields = line.split('"')[1].split(',')
+# fields[0]=名称, fields[1]=开盘, fields[2]=昨收, fields[3]=现价
+# fields[4]=最高, fields[5]=最低, fields[8]=成交量(股), fields[9]=成交额
+```
+
+**阶段四：手动计算 MACD/KDJ/RSI/BOLL/均线（纯 Python，始终需要）**
+
+```python
+import math
+
 def ema(prices, n):
     k = 2/(n+1); e = [prices[0]]
     for p in prices[1:]: e.append(p*k + e[-1]*(1-k))
@@ -176,47 +204,127 @@ closes = [float(k["close"]) for k in klines]
 ema12 = ema(closes, 12); ema26 = ema(closes, 26)
 dif = [ema12[i]-ema26[i] for i in range(len(closes))]
 dea = ema(dif, 9)
-macd = [(dif[i]-dea[i])*2 for i in range(len(closes))]
+macd_hist = [(dif[i]-dea[i])*2 for i in range(len(closes))]
 
 def kdj(data, n=9):
     k, d = 50, 50; ks, ds, js = [], [], []
     for i in range(len(data)):
-        low_n = min(float(x["low"]) for x in data[max(0,i-n+1):i+1])
-        high_n = max(float(x["high"]) for x in data[max(0,i-n+1):i+1])
+        subset = data[max(0,i-n+1):i+1]
+        low_n = min(float(x["low"]) for x in subset)
+        high_n = max(float(x["high"]) for x in subset)
         c = float(data[i]["close"])
         rsv = (c-low_n)/(high_n-low_n)*100 if high_n!=low_n else 50
         k = k*2/3+rsv/3; d = d*2/3+k/3; j = 3*k-2*d
-        ks.append(k); ds.append(d); js.append(j)
+        ks.append(round(k,2)); ds.append(round(d,2)); js.append(round(j,2))
     return ks, ds, js
+
+def rsi(closes, n=14):
+    gains, losses = [], []
+    for i in range(1, len(closes)):
+        delta = closes[i]-closes[i-1]
+        gains.append(max(delta,0)); losses.append(max(-delta,0))
+    avg_gain = sum(gains[:n])/n; avg_loss = sum(losses[:n])/n
+    rs_list = []
+    for i in range(n, len(gains)):
+        avg_gain = (avg_gain*(n-1)+gains[i])/n
+        avg_loss = (avg_loss*(n-1)+losses[i])/n
+        rs = avg_gain/avg_loss if avg_loss != 0 else 100
+        rs_list.append(round(100-100/(1+rs), 2))
+    return rs_list
+
+def boll(closes, n=20):
+    uppers, mids, lowers = [], [], []
+    for i in range(len(closes)):
+        if i < n-1: uppers.append(0); mids.append(0); lowers.append(0)
+        else:
+            window = closes[i-n+1:i+1]
+            ma = sum(window)/n
+            std = math.sqrt(sum((x-ma)**2 for x in window)/n)
+            uppers.append(round(ma+2*std,2)); mids.append(round(ma,2)); lowers.append(round(ma-2*std,2))
+    return uppers, mids, lowers
+
+def ma(closes, n):
+    result = []
+    for i in range(len(closes)):
+        if i < n-1: result.append(0)
+        else: result.append(round(sum(closes[i-n+1:i+1])/n, 2))
+    return result
+
+ma5_vals = ma(closes, 5); ma10_vals = ma(closes, 10); ma20_vals = ma(closes, 20)
+ma30_vals = ma(closes, 30); ma60_vals = ma(closes, 60)
 ```
+
+**数据优先级**：
+1. AKShare `stock_zh_a_spot_em` → 实时价 + PE + PB + 市值（一步到位）
+2. AKShare `stock_zh_a_hist` → K线（不限长度，前复权，MA60 完整可用）
+3. 新浪 `hq.sinajs.cn` → 快速实时价（AKShare 慢时 fallback）
+4. 手动计算 → MACD / KDJ / RSI / BOLL / 均线（始终需要）
 
 ---
 
-## Step 2: 获取新闻数据
+## Step 2: 获取新闻与研报数据
 
-使用系统可用的搜索工具（如 web_search 或已安装的搜索类 MCP 工具）搜索该股票的最新新闻，**至少搜索 3 个查询**：
-1. `{股票名称} {股票代码} 最新消息 2026`
-2. `{股票代码} stock news latest`
-3. `{股票名称} 研报 评级`
+使用 AKShare 直接获取个股新闻和机构研报，不再依赖 web_search（实测 DuckDuckGo 对中文 A 股新闻覆盖率为零）。
 
-从搜索结果中提取每条新闻的**标题和摘要（snippet）**，不需要逐条 web_fetch。
+**阶段一：AKShare 个股新闻**
 
-将搜索结果整理为 JSON 数组，**保存为变量 `news_data`**：
+```python
+import akshare as ak
+
+# 获取个股近期新闻（标题 + 来源 + 时间 + URL）
+df_news = ak.stock_news_em(symbol=stock_code)
+# df_news columns: 关键词, 新闻编码, 新闻标题, 发布时间, 来源, 新闻内容(URL)
+# 取最新 8 条
+df_news = df_news.head(8)
+```
+
+每条新闻的 `新闻内容` 字段是一个 URL。对每条新闻，用 `fetch_url` 工具获取全文内容（或至少前 500 字），从全文内容中提取 50 字以上的摘要。如果 `fetch_url` 不可用，则根据 `新闻标题` 字段推断摘要内容（50 字以上）。
+
+**阶段二：AKShare 机构研报**
+
+```python
+# 获取机构研报（评级 + 目标价 + 盈利预测）
+df_report = ak.stock_research_report_em(symbol=stock_code)
+# df_report columns: 序号, 股票代码, 股票简称, 研报标题, 评级, 上一月新研究评级
+#   2026-盈利预测-利润, 2026-盈利预测-市盈率, 2027-盈利预测-利润, 2027-盈利预测-市盈率
+#   2028-盈利预测-利润, 2028-盈利预测-市盈率, 行业, 日期, 评级PDF路径
+```
+
+提取最新 5 份研报的评级、目标盈利预测。将研报信息整合到 `news_data` 中：
+
+**阶段三：组装 news_data**
+
+将个股新闻和研报整理为统一 JSON，**保存为变量 `news_data`**：
+
 ```json
 {
   "news_list": [
-    {"title": "新闻标题", "date": "日期", "source": "来源", "summary": "至少50字的摘要", "sentiment": "偏多/中性/偏空", "url": "原文链接"},
-    ...
+    {
+      "title": "新闻标题",
+      "date": "2026-04-29",
+      "source": "东方财富/证券时报/科创板日报",
+      "summary": "至少50字的摘要（从 fetch_url 全文提取或根据标题推断）",
+      "sentiment": "偏多/中性/偏空",
+      "url": "原文链接"
+    }
+  ],
+  "research_reports": [
+    {
+      "date": "2026-04-15",
+      "title": "研报标题",
+      "rating": "买入/增持/持有/减持/卖出",
+      "profit_forecast_2026": "盈利预测",
+      "pe_forecast_2026": "市盈率预测"
+    }
   ]
 }
 ```
 
 **关键约束**：
-- `news_list` 数组**至少包含 3 条新闻**，不足则追加搜索
+- `news_list` 数组**至少包含 5 条新闻**
+- `research_reports` 数组**至少包含 3 条研报**（不足则减少，不得虚构）
 - `summary` 字段不得为空，最少 50 字
-- 如果实在搜不到，设置 `news_list` 为空数组但 `sentiment` 设为 "暂无数据"
-
-**A股补充：web_search 对中文新闻覆盖差时，改用东方财富公告 API**
+- 如果 AKShare 新闻接口失败，fallback 到东方财富公告 API：
 
 ```python
 import urllib.request, json
@@ -226,10 +334,9 @@ req = urllib.request.Request(url, headers={"Referer": "https://quote.eastmoney.c
 with urllib.request.urlopen(req, timeout=15) as r:
     d = json.loads(r.read())
     items = d.get("data", {}).get("list", [])
-    # 每条：{"notice_date": "2026-04-21 ...", "title": "公司名:关于..."}
 ```
 
-将公告标题整理为 `news_list` 条目，`summary` 字段根据标题内容手动推断（50字以上），`sentiment` 根据公告性质判断（司法拍卖/诉讼→偏空，收购/重组→偏多，常规公告→中性）。
+将公告标题整理为 `news_list` 条目，`summary` 字段根据标题内容推断（50字以上），`sentiment` 根据公告性质判断（司法拍卖/诉讼→偏空，收购/重组→偏多，常规公告→中性）。
 
 ---
 

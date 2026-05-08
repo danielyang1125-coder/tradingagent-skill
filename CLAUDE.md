@@ -33,7 +33,9 @@ All steps run in the main agent process. No subagents. Each step depends on the 
 
 ### Data Pipeline
 
-Every LLM output is piped through `validate_step.py`, which:
+**Data sourcing** (v2.1.0): AKShare (`stock_zh_a_spot_em`, `stock_zh_a_hist`, `stock_news_em`, `stock_research_report_em`) provides real-time quotes, K-lines (unlimited length, 前复权), PE/PB/market-cap, news, and institutional research reports. Sina `hq.sinajs.cn` is retained as a fast real-time fallback. MACD/KDJ/RSI/BOLL/MA are computed in pure Python from OHLCV data.
+
+**Validation flow**: Every LLM output is piped through `validate_step.py`, which:
 1. Extracts JSON from LLM output (handles markdown code blocks, escaped newlines)
 2. Validates required fields for that step
 3. On success (`exit 0`): prints cleaned JSON to stdout — agent saves it as a context variable
@@ -44,7 +46,7 @@ Every LLM output is piped through `validate_step.py`, which:
 ```json
 {
   "stock_code": "000729", "stock_name": "燕京啤酒", "current_price": 5.50,
-  "news_data": { "news_list": [...] },
+  "news_data": { "news_list": [...], "research_reports": [...] },
   "parallel_analysis": {
     "tech_analyst": { "report": "...", "key_points": [...] },
     "fundamentals_analyst": { "report": "...", "key_points": [...] },
@@ -71,6 +73,7 @@ Every LLM output is piped through `validate_step.py`, which:
 - **English JSON keys, Chinese display**: All keys in `report.json` are English for LLM output stability.
 - **Retry on validation failure**: `validate_step.py` exits 1 with a structured hint; the agent retries with the hint injected. After max retries, `--default` provides a safe fallback.
 - **Trader price validation**: If `decision` is `买入`, `buy_price`/`target_price`/`stop_loss` must be numeric — special-cased in `validate_trader()`.
+- **AKShare data pipeline**: Stock quotes, K-lines, fundamentals, news, and research reports sourced from AKShare (zero API key). Sina API kept as fallback for real-time quotes only.
 - **Valid final ratings**: 买入 / 增持 / 持有 / 减持 / 卖出
 
 ### Key Files

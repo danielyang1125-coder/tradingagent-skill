@@ -4,6 +4,7 @@ scripts/results/
 scripts/__pycache__/
 *.pyc
 *.bak
+*.json
 scripts/run_analysis.py
 scripts/run_analysis_steps.py
 scripts/generate_all_results.py
