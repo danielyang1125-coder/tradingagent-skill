@@ -2,6 +2,7 @@ scripts/reports/
 **/scripts/logs/
 scripts/results/
 scripts/__pycache__/
+tushare_config.json
 *.pyc
 *.bak
 *.json

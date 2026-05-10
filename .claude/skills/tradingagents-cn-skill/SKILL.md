@@ -61,6 +61,27 @@ python3 {baseDir}/scripts/validate_step.py --step <步骤名> --default
 
 所有 LLM 调用的 system_prompt 和 user_message 使用**中文**。所有分析内容使用**中文**输出。
 
+### Windows 编码规范
+
+在 Windows 环境下执行 Python 脚本时，必须在脚本开头添加 UTF-8 编码声明：
+
+```python
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
+```
+
+Shell 调用时推荐加 `chcp 65001` 切换终端代码页：
+
+```bash
+chcp 65001 >nul && python script.py
+```
+
+输出到文件避免终端乱码干扰：
+
+```bash
+python script.py > _log.txt 2>&1
+```
+
 ---
 
 ## 工作流程
@@ -166,6 +187,8 @@ row = df_spot[df_spot["代码"] == stock_code].iloc[0]
 # period="daily", adjust="qfq" 前复权。start_date 至少回溯 120 个交易日以确保 MA60 可用
 df_hist = ak.stock_zh_a_hist(symbol=stock_code, period="daily",
                               start_date="20250901", end_date="20260508", adjust="qfq")
+# ⚠️ AKShare 行排序规则：历史时间序列函数（日线/PMI/LPR）→ 最新值在 iloc[-1]
+#    汇总统计函数（M2/GDP）→ 最新值在 iloc[0]。保底方法：始终用 df.tail(3) 验证列结构。
 # df_hist columns: 日期, 开盘, 收盘, 最高, 最低, 成交量, 成交额, 振幅, 涨跌幅, 涨跌额, 换手率
 
 # 转换为与 MACD/KDJ 计算兼容的格式
@@ -260,6 +283,58 @@ ma30_vals = ma(closes, 30); ma60_vals = ma(closes, 60)
 3. 新浪 `hq.sinajs.cn` → 快速实时价（AKShare 慢时 fallback）
 4. 手动计算 → MACD / KDJ / RSI / BOLL / 均线（始终需要）
 
+**阶段四：宏观数据采集（AKShare 静态数据）**
+
+```python
+# === 宏观数据采集（见 data-fetching-guide.md 第三章） ===
+# ⚠️ 行排序规则：PMI/LPR → iloc[-1]；M2/GDP → iloc[0]
+macro = {}
+
+# PMI 制造业（最新值在 iloc[-1]）
+try:
+    df = ak.index_pmi_man_cx()
+    latest = df.iloc[-1]
+    val = float(latest.iloc[1]) if len(latest) > 1 else None
+    if val and 45 < val < 55:
+        macro["pmi_manufacturing"] = val
+except: macro["pmi_manufacturing"] = None
+
+# PMI 非制造业
+try:
+    df = ak.index_pmi_ser_cx()
+    latest = df.iloc[-1]
+    val = float(latest.iloc[1]) if len(latest) > 1 else None
+    if val and 45 < val < 55:
+        macro["pmi_non_manufacturing"] = val
+except: macro["pmi_non_manufacturing"] = None
+
+# LPR（最新值在 iloc[-1]）
+try:
+    df = ak.macro_china_lpr()
+    latest = df.iloc[-1]
+    macro["lpr_1y"] = float(latest["1年期LPR"]) if "1年期LPR" in latest else None
+    macro["lpr_5y"] = float(latest["5年期LPR"]) if "5年期LPR" in latest else None
+except: macro["lpr_1y"] = macro["lpr_5y"] = None
+
+# M2（⚠️ 最新值在 iloc[0]！与上述函数相反）
+try:
+    df = ak.macro_china_money_supply()
+    latest = df.iloc[0]
+    macro["m2_yoy"] = float(latest["同比增长"]) if "同比增长" in latest else None
+except: macro["m2_yoy"] = None
+
+# GDP（⚠️ 最新值在 iloc[0]！）
+try:
+    df = ak.macro_china_gdp()
+    latest = df.iloc[0]
+    macro["gdp_yoy"] = float(latest["国内生产总值同比增长"]) if "国内生产总值同比增长" in latest else None
+except: macro["gdp_yoy"] = None
+
+print(f"[macro] PMI制造={macro.get('pmi_manufacturing')}, LPR1Y={macro.get('lpr_1y')}, M2={macro.get('m2_yoy')}, GDP={macro.get('gdp_yoy')}")
+```
+
+将 `macro` 对象保存为 Agent 上下文变量，供后续步骤（Step 4 基本面、Step 5 新闻）注入 user_message。
+
 ---
 
 ## Step 2: 获取新闻与研报数据
@@ -340,6 +415,51 @@ with urllib.request.urlopen(req, timeout=15) as r:
 
 ---
 
+**阶段四：北向资金（可选，需 Tushare token）**
+
+⚠️ 需要有效的 Tushare token（从 `{baseDir}/tushare_config.json` 读取）。无 token 时跳过，不影响后续分析。
+
+```python
+# ========== 北向资金采集 ==========
+import json, os
+config_path = "tushare_config.json"  # skill 根目录下
+tushare_token = None
+if os.path.exists(config_path):
+    with open(config_path, "r", encoding="utf-8") as f:
+        tushare_token = json.load(f).get("tushare_token")
+
+north_data = {"available": False, "total_net_buy_yi": None, "positive_days": None, "total_days": None}
+
+if tushare_token and tushare_token != "your_tushare_token_here":
+    try:
+        import tushare as ts
+        ts.set_token(tushare_token)
+        pro = ts.pro_api()
+        from datetime import datetime, timedelta
+        end_dt = datetime.now().strftime("%Y%m%d")
+        start_dt = (datetime.now() - timedelta(days=30)).strftime("%Y%m%d")
+        nb = pro.moneyflow_hsgt(start_date=start_dt, end_date=end_dt)
+        nb = nb.sort_values("trade_date")
+        # ⚠️ north_money 单位是万元，转换为亿元
+        north_total = nb["north_money"].astype(float).sum() / 10000
+        north_days = len(nb)
+        north_pos = (nb["north_money"].astype(float) > 0).sum()
+        north_data = {
+            "available": True,
+            "total_net_buy_yi": round(north_total, 1),
+            "positive_days": int(north_pos), "total_days": north_days
+        }
+        print(f"[北向资金] 近{north_days}日累计净买入: {north_total:.1f}亿, 净流入天数: {north_pos}/{north_days}")
+    except Exception as e:
+        print(f"[北向资金] 获取失败: {e}")
+else:
+    print("[北向资金] 未配置 Tushare token，跳过")
+```
+
+将 `north_data` 保存为 Agent 上下文变量，供 Step 5 新闻分析师引用。
+
+---
+
 ## Step 3: 技术/市场分析师
 
 **LLM 调用：**
@@ -372,7 +492,10 @@ echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step tech --st
   股票数据：
   {stock_data JSON（Step 1 结果）}
 
-  请从基本面角度深度分析，以纯 JSON 格式返回。
+  当前宏观环境（由 Step 1 采集）：
+  {macro_data JSON}
+
+  请结合宏观数据（PMI/LPR/M2/GDP），从基本面角度深度分析，评估公司在当前宏观周期中的相对位置。以纯 JSON 格式返回。
   ```
 
 **验证并保存**：
@@ -396,7 +519,13 @@ echo '<LLM输出>' | python3 {baseDir}/scripts/validate_step.py --step fundament
   近期新闻：
   {news_data JSON（Step 2 结果）}
 
-  请从新闻面角度深度分析，以纯 JSON 格式返回。
+  当前宏观环境（由 Step 1 采集）：
+  {macro_data JSON}
+
+  北向资金流向（由 Step 2 采集，可能为 unavailable）：
+  {north_data JSON}
+
+  请结合宏观数据和北向资金流向，从新闻面角度深度分析。以纯 JSON 格式返回。
   ```
 
 **验证并保存**：
